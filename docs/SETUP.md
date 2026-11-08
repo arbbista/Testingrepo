@@ -75,7 +75,7 @@ IDMC Dev org ──Check In──► develop ──Pull request──► main �
    | Secret | `IDMC_PASSWORD` | Its password |
    | Variable | `IDMC_POD_URL` | Login URL for your region, e.g. `https://dm-us.informaticacloud.com` |
    | Variable (optional) | `IDMC_SMOKE_TASK_ID` | ID of a small task to run after each deploy |
-   | Variable (optional) | `IDMC_SMOKE_TASK_TYPE` | Its type: `MTT` (mapping task, default), `WORKFLOW` (taskflow), ... |
+   | Variable (optional) | `IDMC_SMOKE_TASK_TYPE` | Its type: `MTT` (mapping task, default), `DSS` (synchronization task) or `WORKFLOW` (linear taskflow only; normal taskflows are not supported, use one of their mapping tasks instead) |
 
    On **`prod`** also set:
    - **Required reviewers**: the people who approve production releases
