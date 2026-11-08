@@ -1,0 +1,132 @@
+# -----------------------------------------------------------------------------
+# IDMC CD: deploy to QA, then to PROD after approval.
+#
+# Runs when a pull request (develop -> main) is merged. It finds the IDMC
+# check-in commits that the merge brought into `main`, deploys them to the QA
+# org (oldest first) and runs a smoke test. After a reviewer approves, the SAME
+# commits are deployed to the PROD org.
+#
+# You can also run it by hand (Actions tab -> IDMC CD -> Run workflow) to
+# redeploy specific commits, for example to roll back to a known good version.
+#
+# Deploy logic:     scripts/idmc-deploy.sh
+# Commit selection: scripts/idmc-commits.sh
+# Setup steps:      docs/SETUP.md
+# -----------------------------------------------------------------------------
+name: IDMC CD
+
+on:
+  push:
+    branches: [main]
+    # Pushes that only change pipeline or documentation files do not deploy.
+    paths-ignore:
+      - ".github/**"
+      - "scripts/**"
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      commits:
+        description: "Commit hash(es) to deploy, oldest first, separated by spaces"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Find commits to deploy
+    runs-on: ubuntu-latest
+    outputs:
+      commits: ${{ steps.resolve.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find IDMC check-in commits
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          REQUESTED: ${{ inputs.commits }}
+        run: |
+          commits=""
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            for c in $REQUESTED; do
+              if ! full=$(git rev-parse --verify --quiet --end-of-options "${c}^{commit}"); then
+                echo "::error::Commit '$c' was not found in this repository."
+                exit 1
+              fi
+              commits="$commits $full"
+            done
+          else
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "::error::No previous commit to compare with. Use 'Run workflow' and list the commits to deploy."
+              exit 1
+            fi
+            commits=$(bash scripts/idmc-commits.sh "$BEFORE" "$AFTER" | tr '\n' ' ')
+          fi
+          commits=$(echo $commits)   # trim spaces
+
+          {
+            echo "### Commits to deploy"
+            echo ""
+            if [ -z "$commits" ]; then
+              echo "No IDMC check-in commits found. Nothing to deploy."
+            else
+              for c in $commits; do
+                git log -1 --format='- `%h` %s (%an)' "$c"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "commits=$commits" >> "$GITHUB_OUTPUT"
+          echo "Commits to deploy: ${commits:-none}"
+
+  deploy-qa:
+    name: Deploy to QA
+    needs: resolve
+    if: needs.resolve.outputs.commits != ''
+    runs-on: ubuntu-latest
+    environment: qa
+    concurrency:
+      group: idmc-deploy-qa
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to QA
+        env:
+          COMMITS: ${{ needs.resolve.outputs.commits }}
+          IDMC_POD_URL: ${{ vars.IDMC_POD_URL }}
+          IDMC_USERNAME: ${{ secrets.IDMC_USERNAME }}
+          IDMC_PASSWORD: ${{ secrets.IDMC_PASSWORD }}
+          IDMC_SMOKE_TASK_ID: ${{ vars.IDMC_SMOKE_TASK_ID }}
+          IDMC_SMOKE_TASK_TYPE: ${{ vars.IDMC_SMOKE_TASK_TYPE }}
+        run: bash scripts/idmc-deploy.sh $COMMITS
+
+  deploy-prod:
+    name: Deploy to PROD
+    needs: [resolve, deploy-qa]
+    if: needs.resolve.outputs.commits != ''
+    runs-on: ubuntu-latest
+    # "Required reviewers" on the `prod` environment make this job wait for approval.
+    environment: prod
+    concurrency:
+      group: idmc-deploy-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to PROD
+        env:
+          COMMITS: ${{ needs.resolve.outputs.commits }}
+          IDMC_POD_URL: ${{ vars.IDMC_POD_URL }}
+          IDMC_USERNAME: ${{ secrets.IDMC_USERNAME }}
+          IDMC_PASSWORD: ${{ secrets.IDMC_PASSWORD }}
+          IDMC_SMOKE_TASK_ID: ${{ vars.IDMC_SMOKE_TASK_ID }}
+          IDMC_SMOKE_TASK_TYPE: ${{ vars.IDMC_SMOKE_TASK_TYPE }}
+        run: bash scripts/idmc-deploy.sh $COMMITS

@@ -1,0 +1,68 @@
+# -----------------------------------------------------------------------------
+# IDMC CI: checks that run on every pull request into `main`.
+# Nothing is deployed here. Deployment happens in idmc-cd.yml after merge.
+# -----------------------------------------------------------------------------
+name: IDMC CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate assets
+    runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List changed files
+        run: |
+          {
+            echo "### Files changed in this pull request"
+            echo ""
+            git diff --name-status "origin/$BASE_REF...HEAD" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check that all JSON files are valid
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            if ! jq empty "$f" 2>/dev/null; then
+              echo "::error file=$f::Invalid JSON"
+              status=1
+            fi
+          done < <(find . -name '*.json' -not -path './.git/*' -print0)
+          if [ "$status" -eq 0 ]; then echo "All JSON files are valid."; fi
+          exit $status
+
+      - name: Warn about possible hard-coded passwords
+        run: |
+          found=0
+          while IFS= read -r -d '' f; do
+            echo "::warning file=$f::Possible hard-coded password. Use a connection or a parameter instead."
+            found=1
+          done < <(grep -rIlZ --include='*.json' -iE '"password"[[:space:]]*:[[:space:]]*"[^"*]+' . || true)
+          if [ "$found" -eq 0 ]; then echo "No hard-coded passwords found."; fi
+
+      - name: List IDMC check-ins that will be deployed
+        run: |
+          {
+            echo ""
+            echo "### IDMC check-ins that will be deployed after merge"
+            echo ""
+            commits=$(bash scripts/idmc-commits.sh "origin/$BASE_REF" HEAD)
+            if [ -z "$commits" ]; then
+              echo "None (this PR does not change IDMC assets)."
+            else
+              for c in $commits; do
+                git log -1 --format='- `%h` %s (%an)' "$c"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
