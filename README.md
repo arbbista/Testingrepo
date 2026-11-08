@@ -13,4 +13,5 @@ IDMC Dev org ──Check In──► develop ──Pull request──► main �
 
 Start here:
 - [docs/SETUP.md](docs/SETUP.md): one-time setup and daily use
+- [docs/FAQ-parallel-prs-and-dependencies.md](docs/FAQ-parallel-prs-and-dependencies.md): parallel PRs and asset dependencies
 - [docs/IDMC_CICD_Proposal.docx](docs/IDMC_CICD_Proposal.docx): the proposal
